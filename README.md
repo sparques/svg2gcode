@@ -87,9 +87,11 @@ All paths stroked in red will be skipped.
 
 ## 🧠 How SVG Coordinates Are Mapped
 
-SVG coordinate systems define (0,0) at the **top-left**.
+SVG coordinate systems define (0,0) at the **top-left**, where Y
+increases downward.
 
-CNC machines expect (0,0) at the **bottom-left**.
+CNC machines expect (0,0) at the **bottom-left** with Y increasing
+upward.
 
 svg2gcode performs:
 
@@ -133,6 +135,9 @@ Where `svgHeight` comes from:
 
 Unsupported paths simply **do not appear** in the G-code output.
 They do not cause errors unless partially parsed.
+
+Most objects can be made visible to svg2gcode by converting them to a path 
+from within your SVG editing application, e.g. inkscape.
 
 ---
 
