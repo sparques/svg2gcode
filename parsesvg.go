@@ -13,6 +13,8 @@ func parseSVG(r io.Reader) (paths []Path, w, h float64, err error) {
 	var result []Path
 
 	colorStack := []string{""}
+	fillStack := []string{""}
+	filledStack := []bool{false}
 	transformStack := []Transform{identityTransform()}
 
 	for {
@@ -44,22 +46,33 @@ func parseSVG(r io.Reader) (paths []Path, w, h float64, err error) {
 				}
 			case "g":
 				// stroke / style on group
-				var strokeAttr, styleAttr, transformAttr string
+				var strokeAttr, fillAttr, styleAttr, transformAttr string
 				for _, a := range t.Attr {
 					switch a.Name.Local {
 					case "stroke":
 						strokeAttr = a.Value
+					case "fill":
+						fillAttr = a.Value
 					case "style":
 						styleAttr = a.Value
 					case "transform":
 						transformAttr = a.Value
 					}
 				}
+
 				groupColor := extractStrokeColor(strokeAttr, styleAttr)
 				if groupColor == "" {
 					groupColor = colorStack[len(colorStack)-1]
 				}
 				colorStack = append(colorStack, groupColor)
+
+				gf, gfilled := extractFillColor(fillAttr, styleAttr)
+				if gf == "" && !gfilled {
+					gf = fillStack[len(fillStack)-1]
+					gfilled = filledStack[len(filledStack)-1]
+				}
+				fillStack = append(fillStack, gf)
+				filledStack = append(filledStack, gfilled)
 
 				parentT := transformStack[len(transformStack)-1]
 				groupT := parseTransformAttr(transformAttr)
@@ -97,10 +110,18 @@ func parseSVG(r io.Reader) (paths []Path, w, h float64, err error) {
 					strokeCol = currentGroupColor
 				}
 
+				fillCol, isFilled := extractFillColor(raw.Fill, raw.Style)
+				if fillCol == "" && !isFilled {
+					fillCol = fillStack[len(fillStack)-1]
+					isFilled = filledStack[len(filledStack)-1]
+				}
+
 				result = append(result, Path{
 					Points: pts,
 					Closed: closed,
 					Stroke: strokeCol,
+					Fill:   fillCol,
+					Filled: isFilled,
 				})
 
 			case "polyline":
@@ -126,10 +147,18 @@ func parseSVG(r io.Reader) (paths []Path, w, h float64, err error) {
 					strokeCol = currentGroupColor
 				}
 
+				fillCol, isFilled := extractFillColor(raw.Fill, raw.Style)
+				if fillCol == "" && !isFilled {
+					fillCol = fillStack[len(fillStack)-1]
+					isFilled = filledStack[len(filledStack)-1]
+				}
+
 				result = append(result, Path{
 					Points: pts,
 					Closed: false,
 					Stroke: strokeCol,
+					Fill:   fillCol,
+					Filled: isFilled,
 				})
 
 			case "polygon":
@@ -158,10 +187,18 @@ func parseSVG(r io.Reader) (paths []Path, w, h float64, err error) {
 					strokeCol = currentGroupColor
 				}
 
+				fillCol, isFilled := extractFillColor(raw.Fill, raw.Style)
+				if fillCol == "" && !isFilled {
+					fillCol = fillStack[len(fillStack)-1]
+					isFilled = filledStack[len(filledStack)-1]
+				}
+
 				result = append(result, Path{
 					Points: pts,
 					Closed: true,
 					Stroke: strokeCol,
+					Fill:   fillCol,
+					Filled: isFilled,
 				})
 			}
 
@@ -170,10 +207,17 @@ func parseSVG(r io.Reader) (paths []Path, w, h float64, err error) {
 				if len(colorStack) > 1 {
 					colorStack = colorStack[:len(colorStack)-1]
 				}
+				if len(fillStack) > 1 {
+					fillStack = fillStack[:len(fillStack)-1]
+				}
+				if len(filledStack) > 1 {
+					filledStack = filledStack[:len(filledStack)-1]
+				}
 				if len(transformStack) > 1 {
 					transformStack = transformStack[:len(transformStack)-1]
 				}
 			}
+
 		}
 	}
 

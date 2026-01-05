@@ -19,6 +19,7 @@ This was made after experiencing the joy that is pcb2gcode and the misery that i
 * Optional **cutter compensation** (`inside`, `outside`) for closed paths
 * Avoids paths of a specified **construction color** (default: `#0000ff`)
 * Generates **absolute** G-code (`G90`) in **millimeters** (`G21`)
+* Uses fills to perform primitive (raster) pocketing operations
 * Handles step-down passes for deeper cuts
 * Correctly flips the Y-axis so origin matches CNC convention (bottom-left)
 * Produces deterministic output suitable for 3018-class machines
@@ -172,7 +173,6 @@ These are deliberate — svg2gcode is meant to be predictable, not magical.
 * Does not raise/lower spindle automatically (only emits M5/M2)
 * Does not detect self-intersecting polygons
 * Ignores stroke width (only geometry matters)
-* Does not perform pocketing / engraving fill (but might later)
 * Does not support Z in SVG (this is a strict 2D → G-code mapper)
 * Does not try to combine collinear segments
 * No automatic tabbing, dogbones, or CAM features

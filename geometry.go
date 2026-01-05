@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -119,4 +120,149 @@ func cross(a, b Point) float64 {
 func almostEqualPoint(a, b Point) bool {
 	const eps = 1e-9
 	return math.Abs(a.X-b.X) < eps && math.Abs(a.Y-b.Y) < eps
+}
+
+type Segment struct {
+	A, B Point
+}
+
+// RasterPocketSegments returns scanline segments to clear a polygon.
+// poly may be closed or open; we treat it as closed.
+// stepover and inset are in SVG units.
+// inset should usually be toolRadiusSVG to keep tool fully inside boundary.
+//
+// This implementation assumes a single outer loop (no holes/islands).
+func RasterPocketSegments(poly []Point, stepover, inset float64) []Segment {
+	if len(poly) < 3 || stepover <= 0 {
+		return nil
+	}
+
+	// Ensure closed
+	if !almostEqualPoint(poly[0], poly[len(poly)-1]) {
+		poly = append(append([]Point{}, poly...), poly[0])
+	}
+
+	// Inset by tool radius (inside)
+	if inset > 0 {
+		inner := offsetPolygon(poly, inset, "inside")
+		if len(inner) < 4 {
+			return nil
+		}
+		// Ensure closed
+		if !almostEqualPoint(inner[0], inner[len(inner)-1]) {
+			inner = append(inner, inner[0])
+		}
+		poly = inner
+	}
+
+	minX, minY, maxX, maxY := bounds(poly)
+
+	// Avoid scanline exactly on an edge
+	eps := 1e-9
+	y := minY + eps
+
+	row := 0
+	var segs []Segment
+
+	for y <= maxY+eps {
+		xs := scanlineIntersections(poly, y)
+		if len(xs) >= 2 {
+			sort.Float64s(xs)
+
+			rowSegs := make([]Segment, 0, len(xs)/2)
+			for i := 0; i+1 < len(xs); i += 2 {
+				x0 := xs[i]
+				x1 := xs[i+1]
+				if math.Abs(x1-x0) < 1e-9 {
+					continue
+				}
+
+				a := Point{X: clamp(x0, minX, maxX), Y: y}
+				b := Point{X: clamp(x1, minX, maxX), Y: y}
+				rowSegs = append(rowSegs, Segment{A: a, B: b})
+			}
+
+			// Boustrophedon: alternate direction to reduce wasted travel
+			if row%2 == 1 {
+				for i, j := 0, len(rowSegs)-1; i < j; i, j = i+1, j-1 {
+					rowSegs[i], rowSegs[j] = rowSegs[j], rowSegs[i]
+				}
+				for i := range rowSegs {
+					rowSegs[i].A, rowSegs[i].B = rowSegs[i].B, rowSegs[i].A
+				}
+			}
+
+			segs = append(segs, rowSegs...)
+		}
+
+		y += stepover
+		row++
+	}
+
+	return segs
+}
+
+// Half-open scanline rule: include y in [ymin, ymax) to avoid double-counting vertices.
+func scanlineIntersections(poly []Point, y float64) []float64 {
+	xs := make([]float64, 0, 16)
+
+	for i := 0; i+1 < len(poly); i++ {
+		p0 := poly[i]
+		p1 := poly[i+1]
+
+		// Skip horizontal edges
+		if nearlyEqual(p0.Y, p1.Y) {
+			continue
+		}
+
+		// Order by Y
+		if p0.Y > p1.Y {
+			p0, p1 = p1, p0
+		}
+
+		// Half-open: y in [p0.Y, p1.Y)
+		if y < p0.Y || y >= p1.Y {
+			continue
+		}
+
+		t := (y - p0.Y) / (p1.Y - p0.Y)
+		x := p0.X + t*(p1.X-p0.X)
+		xs = append(xs, x)
+	}
+
+	return xs
+}
+
+func bounds(poly []Point) (minX, minY, maxX, maxY float64) {
+	minX, minY = poly[0].X, poly[0].Y
+	maxX, maxY = poly[0].X, poly[0].Y
+	for _, p := range poly {
+		if p.X < minX {
+			minX = p.X
+		}
+		if p.Y < minY {
+			minY = p.Y
+		}
+		if p.X > maxX {
+			maxX = p.X
+		}
+		if p.Y > maxY {
+			maxY = p.Y
+		}
+	}
+	return
+}
+
+func clamp(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func nearlyEqual(a, b float64) bool {
+	return math.Abs(a-b) < 1e-12
 }
