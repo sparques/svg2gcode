@@ -563,6 +563,12 @@ func writeGcode(w io.Writer, paths []Path, cfg Config) error {
 	}
 	profilePaths = compPaths
 
+	// Travel optimization: reorder paths and rotate/reverse to reduce rapids.
+	// Note: this operates in SVG units (pre-scale), which is fine since it's consistent.
+	start := Point{X: 0, Y: cfg.SvgHeight} // corresponds to (0,0) in machine coords after Y flip
+	pocketPaths = greedyReorderPaths(pocketPaths, start)
+	profilePaths = greedyReorderPaths(profilePaths, start)
+
 	for idx, p := range pocketPaths {
 		if len(p.Points) == 0 {
 			continue
@@ -788,4 +794,118 @@ func offsetPolygon(points []Point, delta float64, mode string) []Point {
 	}
 
 	return result
+}
+
+func dist2(a, b Point) float64 {
+	dx := a.X - b.X
+	dy := a.Y - b.Y
+	return dx*dx + dy*dy
+}
+
+// rotateClosedToNearest rotates a CLOSED path (last point duplicates first)
+// so that p.Points[0] is the vertex closest to cur.
+// Keeps the path closed (last==first).
+func rotateClosedToNearest(pts []Point, cur Point) []Point {
+	if len(pts) < 4 { // need at least triangle + closing point
+		return pts
+	}
+
+	// strip closing point
+	n := len(pts) - 1
+	body := pts[:n]
+
+	best := 0
+	bestD := dist2(body[0], cur)
+	for i := 1; i < n; i++ {
+		d := dist2(body[i], cur)
+		if d < bestD {
+			bestD = d
+			best = i
+		}
+	}
+
+	if best == 0 {
+		return pts
+	}
+
+	rot := make([]Point, 0, n+1)
+	rot = append(rot, body[best:]...)
+	rot = append(rot, body[:best]...)
+	rot = append(rot, rot[0]) // close
+	return rot
+}
+
+func reversePoints(pts []Point) []Point {
+	out := make([]Point, len(pts))
+	for i := range pts {
+		out[i] = pts[len(pts)-1-i]
+	}
+	return out
+}
+
+// optimizePathInPlace chooses reversal (for open) and rotation (for closed)
+// so the start is closest to cur.
+func optimizePathForStart(p Path, cur Point) Path {
+	if len(p.Points) == 0 {
+		return p
+	}
+
+	if p.Closed {
+		p.Points = rotateClosedToNearest(p.Points, cur)
+		return p
+	}
+
+	// open: consider reversing if end is closer than start
+	start := p.Points[0]
+	end := p.Points[len(p.Points)-1]
+	if dist2(end, cur) < dist2(start, cur) {
+		p.Points = reversePoints(p.Points)
+	}
+	return p
+}
+
+// greedyReorderPaths greedily picks the next closest path start,
+// performing reversal/rotation to make that start as close as possible.
+func greedyReorderPaths(paths []Path, cur Point) []Path {
+	remaining := make([]Path, len(paths))
+	copy(remaining, paths)
+
+	ordered := make([]Path, 0, len(paths))
+
+	for len(remaining) > 0 {
+		bestIdx := 0
+		var bestPath Path
+		bestPath = optimizePathForStart(remaining[0], cur)
+		bestD := dist2(bestPath.Points[0], cur)
+
+		for i := 1; i < len(remaining); i++ {
+			cand := optimizePathForStart(remaining[i], cur)
+			d := dist2(cand.Points[0], cur)
+			if d < bestD {
+				bestD = d
+				bestIdx = i
+				bestPath = cand
+			}
+		}
+
+		ordered = append(ordered, bestPath)
+
+		// advance cur to path end (so we optimize travels between paths)
+		if len(bestPath.Points) > 0 {
+			if bestPath.Closed {
+				// closed paths end where they start (last==first), so
+				// we can treat "end" as start for planning
+				cur = bestPath.Points[0]
+			} else {
+				cur = bestPath.Points[len(bestPath.Points)-1]
+			}
+		}
+
+		// remove chosen from remaining (swap-delete)
+		last := len(remaining) - 1
+		remaining[bestIdx] = remaining[last]
+		remaining = remaining[:last]
+	}
+
+	return ordered
 }
